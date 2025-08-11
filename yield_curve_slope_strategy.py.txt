@@ -1,0 +1,84 @@
+Yield Curve Slope Recession Trading Strategy
+Author: Aditya Das
+Description:
+Uses the 10Y–2Y Treasury yield curve slope as a macro signal for equity market timing.
+When the slope inverts (10Y yield < 2Y yield), reduce equity exposure.
+Otherwise, stay invested.
+"""
+
+import pandas as pd
+import yfinance as yf
+from datetime import datetime
+import matplotlib.pyplot as plt
+
+# ----------------------------
+# 1. Download Yield Curve Data
+# ----------------------------
+print("Downloading yield data from FRED via yfinance...")
+# FRED tickers for 10Y and 2Y Treasury yields
+yield_10y = yf.download("^TNX", start="2000-01-01")['Adj Close'] / 100  # 10-year yield (%)
+yield_2y = yf.download("^IRX", start="2000-01-01")['Adj Close'] / 100   # 3-month yield proxy (no 2Y directly in Yahoo)
+
+# Align dates
+yields = pd.DataFrame({
+    '10Y': yield_10y,
+    '3M': yield_2y
+}).dropna()
+
+# Calculate slope (10Y - 3M)
+yields['slope'] = yields['10Y'] - yields['3M']
+
+# ----------------------------
+# 2. Download Equity Data
+# ----------------------------
+print("Downloading S&P 500 data...")
+sp500 = yf.download("^GSPC", start="2000-01-01")['Adj Close']
+
+# ----------------------------
+# 3. Generate Trading Signal
+# ----------------------------
+# Signal = 1 when slope > 0 (normal), 0 when slope <= 0 (inverted)
+yields['signal'] = (yields['slope'] > 0).astype(int)
+
+# Align with equity data
+data = pd.concat([sp500, yields['signal']], axis=1).dropna()
+data.columns = ['SP500', 'signal']
+
+# ----------------------------
+# 4. Backtest Strategy
+# ----------------------------
+data['returns'] = data['SP500'].pct_change()
+data['strategy_returns'] = data['returns'] * data['signal'].shift(1)
+
+cumulative_sp500 = (1 + data['returns']).cumprod()
+cumulative_strategy = (1 + data['strategy_returns']).cumprod()
+
+# ----------------------------
+# 5. Plot Results
+# ----------------------------
+plt.figure(figsize=(12, 6))
+plt.plot(cumulative_sp500, label="Buy & Hold S&P 500", color="blue")
+plt.plot(cumulative_strategy, label="Yield Curve Strategy", color="green")
+plt.title("Yield Curve Slope Strategy vs Buy & Hold")
+plt.xlabel("Date")
+plt.ylabel("Cumulative Returns")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# ----------------------------
+# 6. Performance Summary
+# ----------------------------
+def performance_stats(returns):
+    total_return = (1 + returns).prod() - 1
+    annualized_return = (1 + total_return) ** (252 / len(returns)) - 1
+    annualized_vol = returns.std() * (252 ** 0.5)
+    sharpe_ratio = annualized_return / annualized_vol if annualized_vol != 0 else 0
+    return total_return, annualized_return, sharpe_ratio
+
+buy_hold_stats = performance_stats(data['returns'].dropna())
+strategy_stats = performance_stats(data['strategy_returns'].dropna())
+
+print("\nPerformance Comparison")
+print(f"Buy & Hold: Total={buy_hold_stats[0]:.2%}, Annualized={buy_hold_stats[1]:.2%}, Sharpe={buy_hold_stats[2]:.2f}")
+print(f"Strategy : Total={strategy_stats[0]:.2%}, Annualized={strategy_stats[1]:.2%}, Sharpe={strategy_stats[2]:.2f}")
